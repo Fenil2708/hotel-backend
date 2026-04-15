@@ -9,7 +9,7 @@ const {
   updateProfile,
 } = require("../controllers/authController");
 
-const authMiddleware = require("../middleware/authMiddleware");
+const authMiddleware = require("../middlewares/auth");
 
 const router = express.Router();
 
