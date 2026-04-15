@@ -1,15 +1,31 @@
 const express = require("express");
-const { getDashboardStats, updateOrderStatus, forceCloseTable, getBillHistory, getAllUsers, getUserHistory, getProfitStats } = require("../controllers/adminController");
-const { adminMiddleware } = require("../middlewares/auth");
+const {
+  getDashboardStats,
+  updateOrderStatus,
+  forceCloseTable,
+  getBillHistory,
+  getAllUsers,
+  getUserHistory,
+  getProfitStats
+} = require("../controllers/adminController");
+
+const { authMiddleware, adminMiddleware } = require("../middlewares/auth");
 
 const router = express.Router();
 
-router.get("/dashboard", adminMiddleware, getDashboardStats);
-router.get("/users", adminMiddleware, getAllUsers);
-router.get("/users/:id/history", adminMiddleware, getUserHistory);
-router.get("/profit", adminMiddleware, getProfitStats);
-router.patch("/orders/:id/status", adminMiddleware, updateOrderStatus);
-router.post("/table-sessions/:id/force-close", adminMiddleware, forceCloseTable);
-router.get("/history", adminMiddleware, getBillHistory);
+// 🔥 IMPORTANT FIX: authMiddleware first
+router.get("/dashboard", authMiddleware, adminMiddleware, getDashboardStats);
+
+router.get("/users", authMiddleware, adminMiddleware, getAllUsers);
+
+router.get("/users/:id/history", authMiddleware, adminMiddleware, getUserHistory);
+
+router.get("/profit", authMiddleware, adminMiddleware, getProfitStats);
+
+router.patch("/orders/:id/status", authMiddleware, adminMiddleware, updateOrderStatus);
+
+router.post("/table-sessions/:id/force-close", authMiddleware, adminMiddleware, forceCloseTable);
+
+router.get("/history", authMiddleware, adminMiddleware, getBillHistory);
 
 module.exports = router;
