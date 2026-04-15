@@ -1,6 +1,6 @@
 const express = require("express");
 const { getFoods, createFood, updateFood, deleteFood } = require("../controllers/foodController");
-const { adminMiddleware } = require("../middlewares/auth");
+const { authMiddleware, adminMiddleware } = require("../middlewares/auth");
 
 const router = express.Router();
 
@@ -8,8 +8,8 @@ const router = express.Router();
 router.get("/", getFoods);
 
 // Admin: Manage menu
-router.post("/", adminMiddleware, createFood);
-router.put("/:id", adminMiddleware, updateFood);
-router.delete("/:id", adminMiddleware, deleteFood);
+router.post("/", authMiddleware, adminMiddleware, createFood);
+router.put("/:id", authMiddleware, adminMiddleware, updateFood);
+router.delete("/:id", authMiddleware, adminMiddleware, deleteFood);
 
 module.exports = router;

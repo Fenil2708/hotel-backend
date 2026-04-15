@@ -22,6 +22,9 @@ async function buildBillSnapshot(tableSessionId) {
   for (const order of orders) {
     for (const line of order.items) {
       const food = line.foodId;
+      if (!food) {
+        continue;
+      }
       lines.push({
         foodId: food._id,
         name: food.name,

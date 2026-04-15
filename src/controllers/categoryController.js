@@ -11,7 +11,9 @@ const getCategories = async (req, res) => {
 
 const createCategory = async (req, res) => {
     try {
-        const cat = await Category.create({ name: req.body.name });
+        const name = String(req.body.name || "").trim();
+        if (!name) return res.status(400).json({ message: "Category name is required." });
+        const cat = await Category.create({ name });
         res.status(201).json(cat);
     } catch(e) {
         if(e.code === 11000) return res.status(400).json({ message: "Category name must be unique." });
