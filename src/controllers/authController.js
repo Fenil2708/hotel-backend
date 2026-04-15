@@ -189,4 +189,5 @@ module.exports = {
   loginCustomer,
   requestOtp,
   verifyOtp,
+  updateProfile,
 };
