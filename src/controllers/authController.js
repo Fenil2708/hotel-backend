@@ -9,12 +9,12 @@ const normalizeEnvValue = (value) => String(value || "").trim().replace(/^['"]|[
 const SMTP_USER = normalizeEnvValue(process.env.EMAIL_USER);
 const SMTP_PASS = normalizeEnvValue(process.env.EMAIL_PASS);
 const SMTP_HOST = normalizeEnvValue(process.env.SMTP_HOST) || "smtp.gmail.com";
-const SMTP_PORT = Number(normalizeEnvValue(process.env.SMTP_PORT) || 465);
+const SMTP_PORT = Number(normalizeEnvValue(process.env.SMTP_PORT) || 587);
 
 const transporter = nodemailer.createTransport({
   host: SMTP_HOST,
   port: SMTP_PORT,
-  secure: SMTP_PORT === 465,
+  secure: false, // ❌ 465 mate true hoy, pan have false rakho
   auth: {
     user: SMTP_USER,
     pass: SMTP_PASS,
