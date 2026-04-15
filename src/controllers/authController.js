@@ -116,6 +116,7 @@ const requestOtp = async (req, res) => {
       passwordHash,
       otp,
       expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+      lastSentAt: new Date(),
     });
 
     await sgMail.send({

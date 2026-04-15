@@ -5,7 +5,7 @@ const passwordResetOtpSchema = new mongoose.Schema(
     email: { type: String, required: true, index: true },
     otp: { type: String, required: true },
     expiresAt: { type: Date, required: true },
-    lastSentAt: { type: Date, required: true },
+    lastSentAt: { type: Date, required: true, default: Date.now },
   },
   { timestamps: true }
 );

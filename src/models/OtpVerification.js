@@ -8,7 +8,7 @@ const otpSchema = new mongoose.Schema(
     role: { type: String, default: "user" }, // user or admin
     otp: { type: String, required: true },
     expiresAt: { type: Date, required: true },
-    lastSentAt: { type: Date, required: true },
+    lastSentAt: { type: Date, required: true, default: Date.now },
     resendCount: { type: Number, default: 0 },
   },
   { timestamps: true }
