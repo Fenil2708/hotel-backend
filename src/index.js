@@ -21,7 +21,10 @@ const notificationRoutes = require("./routes/notificationRoutes");
 const { authMiddleware } = require("./middlewares/auth");
 
 const app = express();
-app.use(cors({ origin: process.env.CLIENT_URL || "http://localhost:5173", credentials: true }));
+app.use(cors({
+  origin: "*",
+  credentials: true
+}));
 app.use(express.json());
 
 cloudinary.config({
