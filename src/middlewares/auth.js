@@ -14,12 +14,10 @@ const authMiddleware = (req, res, next) => {
 };
 
 const adminMiddleware = (req, res, next) => {
-  authMiddleware(req, res, () => {
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ message: "Admin access required" });
-    }
-    next();
-  });
+  if (req.user?.role !== "admin") {
+    return res.status(403).json({ message: "Admin access required" });
+  }
+  next();
 };
 
 const tableSessionAuth = async (req, res, next) => {

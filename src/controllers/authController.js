@@ -162,6 +162,27 @@ const verifyOtp = async (req, res) => {
   }
 };
 
+const updateProfile = async (req, res) => {
+  try {
+    const userId = req.user.id; // from JWT middleware
+
+    const { name, mobile, avatar } = req.body;
+
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { name, mobile, avatar },
+      { new: true }
+    );
+
+    res.json({
+      message: "Profile updated successfully",
+      user,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 module.exports = {
   loginAdmin,
   registerAdmin,
