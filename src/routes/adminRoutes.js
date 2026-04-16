@@ -2,6 +2,7 @@ const express = require("express");
 const {
   getDashboardStats,
   updateOrderStatus,
+  reviewCancellationRequest,
   forceCloseTable,
   getBillHistory,
   getAllUsers,
@@ -23,6 +24,7 @@ router.get("/users/:id/history", authMiddleware, adminMiddleware, getUserHistory
 router.get("/profit", authMiddleware, adminMiddleware, getProfitStats);
 
 router.patch("/orders/:id/status", authMiddleware, adminMiddleware, updateOrderStatus);
+router.patch("/orders/:id/cancellation", authMiddleware, adminMiddleware, reviewCancellationRequest);
 
 router.post("/table-sessions/:id/force-close", authMiddleware, adminMiddleware, forceCloseTable);
 

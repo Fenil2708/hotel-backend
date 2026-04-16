@@ -21,9 +21,25 @@ const notificationRoutes = require("./routes/notificationRoutes");
 const { authMiddleware } = require("./middlewares/auth");
 
 const app = express();
+
+function parseAllowedOrigins() {
+  return String(process.env.CLIENT_ORIGINS || process.env.CLIENT_URL || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
+
+const allowedOrigins = parseAllowedOrigins();
+
 app.use(cors({
-  origin: "*",
-  credentials: true
+  origin(origin, callback) {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.length === 0) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    if (/^https:\/\/.*\.vercel\.app$/.test(origin)) return callback(null, true);
+    return callback(new Error("CORS origin not allowed"));
+  },
+  credentials: true,
 }));
 app.use(express.json());
 

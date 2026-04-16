@@ -3,6 +3,7 @@ const Order = require("../models/Order");
 const CompletedBill = require("../models/CompletedBill");
 const { buildBillSnapshot } = require("./tableController");
 const { notifyUser, notifyRole } = require("../utils/notificationService");
+const { rotateTableAccessCode } = require("./tableCatalogController");
 
 function dayRange(dateInput) {
   const base = dateInput ? new Date(dateInput) : new Date();
@@ -16,7 +17,12 @@ function dayRange(dateInput) {
 const getDashboardStats = async (req, res) => {
   try {
     const activeSessions = await TableSession.find({ status: { $in: ["open", "awaiting_payment"] } }).sort({ tableNumber: 1 });
-    const kitchenOrders = await Order.find({ status: { $in: ["Pending", "Preparing"] } })
+    const kitchenOrders = await Order.find({
+      $or: [
+        { status: { $in: ["Pending", "Preparing"] } },
+        { cancellationStatus: "requested" },
+      ],
+    })
       .populate({
         path: "items.foodId",
         populate: { path: "category" }
@@ -49,13 +55,90 @@ const getDashboardStats = async (req, res) => {
 const updateOrderStatus = async (req, res) => {
   try {
     const { status } = req.body;
-    const order = await Order.findByIdAndUpdate(req.params.id, { status }, { new: true });
+    const allowedStatuses = ["Pending", "Preparing", "Served", "Cancelled"];
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({ message: "Invalid order status." });
+    }
+
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: "Order not found." });
+    if (order.status === "Cancelled" && status !== "Cancelled") {
+      return res.status(400).json({ message: "Cancelled order cannot move back to active flow." });
+    }
+    if (order.cancellationStatus === "requested" && status !== "Cancelled") {
+      return res.status(400).json({ message: "Resolve the cancellation request before changing order status." });
+    }
+
+    order.status = status;
+    if (status === "Cancelled") {
+      order.cancellationStatus = "approved";
+      order.cancellationResolvedAt = new Date();
+    }
+    await order.save();
+
     if (order) {
       const session = await TableSession.findById(order.tableSessionId).select("customer tableNumber");
       await notifyUser(session?.customer, "Order Status Updated", `Your order for table ${order.tableNumber} is now ${status}.`, "order", { tableNumber: order.tableNumber, orderId: order._id, status });
       await notifyRole("admin", "Order Status Changed", `Order for table ${order.tableNumber} marked ${status}.`, "order", { tableNumber: order.tableNumber, orderId: order._id, status });
     }
     res.json(order);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const reviewCancellationRequest = async (req, res) => {
+  try {
+    const decision = String(req.body.decision || "").trim().toLowerCase();
+    if (!["approve", "reject"].includes(decision)) {
+      return res.status(400).json({ message: "Decision must be approve or reject." });
+    }
+
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: "Order not found." });
+    if (order.cancellationStatus !== "requested") {
+      return res.status(400).json({ message: "No pending cancellation request for this order." });
+    }
+
+    const session = await TableSession.findById(order.tableSessionId).select("customer tableNumber status");
+
+    if (decision === "approve") {
+      order.status = "Cancelled";
+      order.cancellationStatus = "approved";
+    } else {
+      order.cancellationStatus = "rejected";
+    }
+
+    order.cancellationResolvedAt = new Date();
+    await order.save();
+
+    if (decision === "approve" && session?.status === "awaiting_payment") {
+      const activeCount = await Order.countDocuments({
+        tableSessionId: order.tableSessionId,
+        status: { $ne: "Cancelled" },
+      });
+
+      if (activeCount === 0) {
+        session.status = "open";
+        await session.save();
+      }
+    }
+
+    await notifyUser(
+      session?.customer,
+      decision === "approve" ? "Order Cancelled" : "Cancellation Rejected",
+      decision === "approve"
+        ? `Your cancellation request for table ${order.tableNumber} was approved.`
+        : `Your cancellation request for table ${order.tableNumber} was rejected because preparation is already underway.`,
+      "order",
+      { tableNumber: order.tableNumber, orderId: order._id, decision }
+    );
+
+    return res.json({
+      message: decision === "approve" ? "Cancellation approved." : "Cancellation rejected.",
+      order,
+      sessionStatus: session?.status || null,
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -84,11 +167,16 @@ const forceCloseTable = async (req, res) => {
             }
             session.status = "closed";
             await session.save();
+            const rotatedTable = await rotateTableAccessCode(session.tableNumber);
+            if (rotatedTable?.accessCode) {
+                await notifyRole("admin", "Table Access Code Rotated", `Table ${session.tableNumber} received a new access code: ${rotatedTable.accessCode}`, "security", { tableNumber: session.tableNumber, accessCode: rotatedTable.accessCode });
+            }
             await notifyUser(session.customer, "Table Cleared", `Admin cleared table ${session.tableNumber}. You can start a new table now.`, "info", { tableNumber: session.tableNumber });
             await notifyRole("admin", "Table Cleared", `Table ${session.tableNumber} was cleared by admin.`, "success", { tableNumber: session.tableNumber });
         }
 
-        res.json({ message: "Table closed successfully", session });
+        const rotatedTable = await require("../models/DiningTable").findOne({ tableNumber: session.tableNumber }).select("tableNumber accessCode");
+        res.json({ message: "Table closed successfully", session, rotatedTable });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
@@ -167,4 +255,13 @@ const getProfitStats = async (req, res) => {
   }
 };
 
-module.exports = { getDashboardStats, updateOrderStatus, forceCloseTable, getBillHistory, getAllUsers, getUserHistory, getProfitStats };
+module.exports = {
+  getDashboardStats,
+  updateOrderStatus,
+  reviewCancellationRequest,
+  forceCloseTable,
+  getBillHistory,
+  getAllUsers,
+  getUserHistory,
+  getProfitStats,
+};

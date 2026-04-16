@@ -10,6 +10,7 @@ const completedBillSchema = new mongoose.Schema(
         foodId: { type: mongoose.Schema.Types.ObjectId, ref: "Food" },
         name: String,
         selectedOption: { type: String, default: "" },
+        selectedVariant: { type: String, default: "" },
         quantity: Number,
         price: Number,
         lineTotal: Number,

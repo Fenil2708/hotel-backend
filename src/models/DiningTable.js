@@ -4,6 +4,7 @@ const diningTableSchema = new mongoose.Schema(
   {
     tableNumber: { type: Number, required: true, unique: true },
     capacity: { type: Number, required: true, min: 1, max: 20 },
+    accessCode: { type: String, required: true },
     isActive: { type: Boolean, default: true },
   },
   { timestamps: true }

@@ -1,5 +1,14 @@
 const mongoose = require("mongoose");
 
+const foodVariantSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true },
+    price: { type: Number, required: true, min: 0 },
+    isDefault: { type: Boolean, default: false },
+  },
+  { _id: false }
+);
+
 const foodSchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
@@ -8,6 +17,7 @@ const foodSchema = new mongoose.Schema(
     image: { type: String, required: true },
     description: { type: String, required: true },
     options: [{ type: String }], // e.g., ["Butter", "Oil", "Ghee"]
+    variants: [foodVariantSchema],
   },
   { timestamps: true }
 );

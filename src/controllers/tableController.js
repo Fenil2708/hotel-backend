@@ -6,7 +6,9 @@ const TableSession = require("../models/TableSession");
 const Order = require("../models/Order");
 const CompletedBill = require("../models/CompletedBill");
 const DiningTable = require("../models/DiningTable");
+const Food = require("../models/Food");
 const { notifyRole, notifyUser } = require("../utils/notificationService");
+const { ensureAccessCodes, rotateTableAccessCode } = require("./tableCatalogController");
 
 dotenv.config({ path: path.join(__dirname, "../../.env"), override: false });
 
@@ -16,8 +18,15 @@ function getStripeClient() {
   return new Stripe(key);
 }
 
+function generateFallbackAccessCode() {
+  return Math.random().toString(36).slice(2, 8).toUpperCase();
+}
+
 async function buildBillSnapshot(tableSessionId) {
-  const orders = await Order.find({ tableSessionId }).populate("items.foodId");
+  const orders = await Order.find({
+    tableSessionId,
+    status: { $ne: "Cancelled" },
+  }).populate("items.foodId");
   const lines = [];
   for (const order of orders) {
     for (const line of order.items) {
@@ -28,10 +37,11 @@ async function buildBillSnapshot(tableSessionId) {
       lines.push({
         foodId: food._id,
         name: food.name,
+        selectedVariant: line.selectedVariant || "",
         selectedOption: line.selectedOption || "",
         quantity: line.quantity || 1,
-        price: food.price || 0,
-        lineTotal: (food.price || 0) * (line.quantity || 1),
+        price: Number(line.unitPrice || food.price || 0),
+        lineTotal: Number(line.unitPrice || food.price || 0) * (line.quantity || 1),
       });
     }
   }
@@ -43,6 +53,7 @@ const startTable = async (req, res) => {
   const tableNumber = Number(req.body.tableNumber);
   const customer = req.body.customerId;
   const guests = Number(req.body.guests || 1);
+  const accessCode = String(req.body.accessCode || "").trim().toUpperCase();
 
   if (!Number.isInteger(guests) || guests < 1 || guests > 20) {
     return res.status(400).json({ message: "Enter valid guest count (1-20)." });
@@ -50,6 +61,9 @@ const startTable = async (req, res) => {
 
   if (!Number.isInteger(tableNumber) || tableNumber < 1) {
     return res.status(400).json({ message: "Enter a valid table number." });
+  }
+  if (!accessCode) {
+    return res.status(400).json({ message: "Enter the table access code shown at your table." });
   }
 
   if (customer) {
@@ -64,9 +78,13 @@ const startTable = async (req, res) => {
     }
   }
 
+  await ensureAccessCodes();
   const tableDef = await DiningTable.findOne({ tableNumber, isActive: true });
   if (!tableDef) {
     return res.status(404).json({ message: "Selected table is not available." });
+  }
+  if (tableDef.accessCode !== accessCode) {
+    return res.status(403).json({ message: "Invalid table access code. Please scan the table QR or ask staff." });
   }
   if (tableDef.capacity < guests) {
     return res.status(400).json({ message: `Table ${tableNumber} supports up to ${tableDef.capacity} guests.` });
@@ -98,6 +116,7 @@ const startTable = async (req, res) => {
 const getAvailableTables = async (req, res) => {
   try {
     const guests = Number(req.query.guests || 1);
+    await ensureAccessCodes();
     let tables = await DiningTable.find({ isActive: true }).sort({ tableNumber: 1 });
     if (tables.length === 0) {
       const defaults = [
@@ -110,7 +129,8 @@ const getAvailableTables = async (req, res) => {
         { tableNumber: 7, capacity: 4 },
         { tableNumber: 8, capacity: 6 },
       ];
-      await DiningTable.insertMany(defaults.map((row) => ({ ...row, isActive: true })));
+      await DiningTable.insertMany(defaults.map((row) => ({ ...row, accessCode: generateFallbackAccessCode(), isActive: true })));
+      await ensureAccessCodes();
       tables = await DiningTable.find({ isActive: true }).sort({ tableNumber: 1 });
     }
     const activeSessions = await TableSession.find({ status: { $in: ["open", "awaiting_payment"] } }).select("tableNumber");
@@ -153,11 +173,47 @@ const placeOrder = async (req, res) => {
   if (!items?.length || total == null) return res.status(400).json({ message: "Invalid order" });
 
   try {
+    const foodIds = [...new Set(items.map((item) => String(item.foodId || "")).filter(Boolean))];
+    const foods = await Food.find({ _id: { $in: foodIds } });
+    const foodMap = new Map(foods.map((food) => [String(food._id), food]));
+
+    const normalizedItems = items.map((item) => {
+      const food = foodMap.get(String(item.foodId || ""));
+      if (!food) {
+        throw new Error("One of the ordered items no longer exists.");
+      }
+
+      const selectedVariant = String(item.selectedVariant || "").trim();
+      const selectedOption = String(item.selectedOption || "").trim();
+      const quantity = Number(item.quantity) || 1;
+      const variantPrice = selectedVariant
+        ? food.variants?.find((variant) => variant.name === selectedVariant)?.price
+        : undefined;
+      const unitPrice = Number(variantPrice ?? food.price ?? 0);
+
+      if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+        throw new Error(`Invalid pricing for ${food.name}.`);
+      }
+
+      return {
+        foodId: item.foodId,
+        quantity,
+        selectedOption,
+        selectedVariant,
+        unitPrice,
+      };
+    });
+
+    const computedTotal = normalizedItems.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
+    if (!Number.isFinite(computedTotal) || computedTotal <= 0) {
+      return res.status(400).json({ message: "Order pricing is invalid." });
+    }
+
     const order = await Order.create({
       tableSessionId: ts._id,
       tableNumber: ts.tableNumber,
-      items,
-      total,
+      items: normalizedItems,
+      total: computedTotal,
       status: "Pending", // Admin accept required maybe, but for now pending
     });
     
@@ -186,8 +242,8 @@ const requestBill = async (req, res) => {
   const ts = req.tableSession;
   if (ts.status !== "open") return res.status(400).json({ message: "Bill already requested or session ended." });
 
-  const count = await Order.countDocuments({ tableSessionId: ts._id });
-  if (count === 0) return res.status(400).json({ message: "No orders yet." });
+  const count = await Order.countDocuments({ tableSessionId: ts._id, status: { $ne: "Cancelled" } });
+  if (count === 0) return res.status(400).json({ message: "No active orders left for billing." });
 
   ts.status = "awaiting_payment";
   await ts.save();
@@ -199,6 +255,52 @@ const requestBill = async (req, res) => {
     tableNumber: ts.tableNumber,
     status: ts.status,
   });
+};
+
+const requestOrderCancellation = async (req, res) => {
+  const ts = req.tableSession;
+  const reason = String(req.body.reason || "").trim();
+
+  try {
+    const order = await Order.findOne({
+      _id: req.params.id,
+      tableSessionId: ts._id,
+    }).populate("items.foodId");
+
+    if (!order) return res.status(404).json({ message: "Order not found for this table." });
+    if (order.status === "Served") {
+      return res.status(400).json({ message: "Served orders cannot be cancelled." });
+    }
+    if (order.status === "Cancelled" || order.cancellationStatus === "approved") {
+      return res.status(400).json({ message: "This order is already cancelled." });
+    }
+    if (order.cancellationStatus === "requested") {
+      return res.status(400).json({ message: "Cancellation request already sent to staff." });
+    }
+
+    order.cancellationStatus = "requested";
+    order.cancellationReason = reason;
+    order.cancellationRequestedAt = new Date();
+    order.cancellationResolvedAt = null;
+    await order.save();
+
+    await notifyRole(
+      "admin",
+      "Order Cancellation Requested",
+      `Table ${ts.tableNumber} requested cancellation for an order currently ${order.status}.`,
+      "order",
+      { tableNumber: ts.tableNumber, orderId: order._id, status: order.status }
+    );
+
+    res.json({
+      message: order.status === "Pending"
+        ? "Cancellation request sent. Staff can approve it before preparation starts."
+        : "Order is already in preparation. Staff review is required before cancellation.",
+      order,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };
 
 const completeCheckout = async (req, res) => {
@@ -232,6 +334,7 @@ async function finalizeCheckout(tableSession, { paymentMethod, rating = 0, revie
     if (tableSession.status !== "closed") {
       tableSession.status = "closed";
       await tableSession.save();
+      await rotateTableAccessCode(tableSession.tableNumber);
     }
     return existing;
   }
@@ -253,6 +356,10 @@ async function finalizeCheckout(tableSession, { paymentMethod, rating = 0, revie
 
   tableSession.status = "closed";
   await tableSession.save();
+  const rotatedTable = await rotateTableAccessCode(tableSession.tableNumber);
+  if (rotatedTable?.accessCode) {
+    await notifyRole("admin", "Table Access Code Rotated", `Table ${tableSession.tableNumber} received a new access code: ${rotatedTable.accessCode}`, "security", { tableNumber: tableSession.tableNumber, accessCode: rotatedTable.accessCode });
+  }
   await notifyRole("admin", "Checkout Completed", `Table ${tableSession.tableNumber} checkout completed (${paymentMethod}).`, "billing", { tableNumber: tableSession.tableNumber, paymentMethod });
   await notifyUser(tableSession.customer, "Checkout Done", `Your checkout for table ${tableSession.tableNumber} is completed.`, "success", { tableNumber: tableSession.tableNumber });
   return completedBill;
@@ -354,6 +461,7 @@ module.exports = {
   placeOrder,
   getMyOrders,
   requestBill,
+  requestOrderCancellation,
   completeCheckout,
   createStripeCheckoutSession,
   confirmOnlineCheckout,

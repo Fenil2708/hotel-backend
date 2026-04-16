@@ -6,6 +6,7 @@ const {
   placeOrder,
   getMyOrders,
   requestBill,
+  requestOrderCancellation,
   completeCheckout,
   createStripeCheckoutSession,
   confirmOnlineCheckout,
@@ -18,6 +19,7 @@ router.post("/start", startTable);
 router.get("/available", getAvailableTables);
 router.get("/session", getSession);
 router.post("/order", tableSessionAuth, placeOrder);
+router.post("/orders/:id/cancel-request", tableSessionAuth, requestOrderCancellation);
 router.get("/my-orders", tableSessionAuth, getMyOrders);
 router.post("/request-bill", tableSessionAuth, requestBill);
 router.post("/stripe/create-session", tableSessionAuth, createStripeCheckoutSession);
